@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.pyc
+
+# Local per-user settings (exe path, window position) - never distribute
+dungeon_editor_settings.json
+
+# PyInstaller build output
+build/
+dist/
+
+# SDK files are copyright Reality Pump / TopWare - never distribute
+Dungeons.exe
+dungeon.txt
+Data/
+Dungeons/
