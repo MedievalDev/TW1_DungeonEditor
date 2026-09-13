@@ -1,6 +1,6 @@
 # TW1 Dungeon Editor
 
-Version 0.1.1
+Version 0.1.2
 
 A usable window around the original **Dungeons.exe** from the Two Worlds SDK
 (Reality Pump, 2007). The original dungeons of Two Worlds were built with this

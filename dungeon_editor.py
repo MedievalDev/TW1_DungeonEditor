@@ -25,7 +25,7 @@ from theme import (BG, PANEL, FIELD, CANVAS_BG, LINE, INK, MUT, GOLD, GOLD_HI,
 
 APP_NAME = 'TW1 DUNGEON EDITOR'
 APP_TITLE = 'TW1 Dungeon Editor'
-VERSION = '0.1.1'
+VERSION = '0.1.2'
 REPO_NAME = 'TW1_DungeonEditor'
 GITHUB_URL = f'https://github.com/MedievalDev/{REPO_NAME}'
 SITE_URL = 'https://alchemy-fox.de/'
@@ -642,10 +642,11 @@ class App:
                       command=self.new_file)
 
     def _fill_view(self, m):
-        m.add_command(label=tr('Vergrößern'), accelerator=tr('Bild auf'),
-                      command=lambda: self.send('PGUP'))
-        m.add_command(label=tr('Verkleinern'), accelerator=tr('Bild ab'),
+        # Gemessen: Bild ab zoomt in Dungeons.exe hinein, Bild auf heraus.
+        m.add_command(label=tr('Vergrößern'), accelerator=tr('Bild ab'),
                       command=lambda: self.send('PGDN'))
+        m.add_command(label=tr('Verkleinern'), accelerator=tr('Bild auf'),
+                      command=lambda: self.send('PGUP'))
         move = theme.Menu(m)
         for label, key in ((tr('Links'), 'LEFT'), (tr('Rechts'), 'RIGHT'),
                            (tr('Hoch'), 'UP'), (tr('Runter'), 'DOWN')):
@@ -707,8 +708,8 @@ class App:
             self.mode_buttons[key] = b
         theme.Tooltip(self.mode_box, tr('Tab schaltet im Editor weiter'))
         sep()
-        button(tr('Zoom -'), lambda: self.send('PGDN'), tr('Verkleinern (Bild ab)'))
-        button(tr('Zoom +'), lambda: self.send('PGUP'), tr('Vergrößern (Bild auf)'))
+        button(tr('Zoom -'), lambda: self.send('PGUP'), tr('Verkleinern (Bild auf)'))
+        button(tr('Zoom +'), lambda: self.send('PGDN'), tr('Vergrößern (Bild ab)'))
         button(tr('Offset'), lambda: self.send('F4'), tr('Karten-Offset setzen (F4)'))
 
     def build_panel(self, body):
@@ -1037,8 +1038,8 @@ EN = {
         'Console script for the Two Worlds Editor (F5)',
     'Tab schaltet im Editor weiter': 'Tab cycles modes in the editor',
     'Zoom -': 'Zoom -', 'Zoom +': 'Zoom +', 'Offset': 'Offset',
-    'Verkleinern (Bild ab)': 'Zoom out (Page Down)',
-    'Vergrößern (Bild auf)': 'Zoom in (Page Up)',
+    'Verkleinern (Bild auf)': 'Zoom out (Page Up)',
+    'Vergrößern (Bild ab)': 'Zoom in (Page Down)',
     'Karten-Offset setzen (F4)': 'Set map offset (F4)',
     'Grundriss': 'Layout', 'Höhe': 'Height', 'Typ': 'Type', 'Objekte': 'Objects',
     'Lichter': 'Lights',
