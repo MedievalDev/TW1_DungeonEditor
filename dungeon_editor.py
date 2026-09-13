@@ -25,7 +25,7 @@ from theme import (BG, PANEL, FIELD, CANVAS_BG, LINE, INK, MUT, GOLD, GOLD_HI,
 
 APP_NAME = 'TW1 DUNGEON EDITOR'
 APP_TITLE = 'TW1 Dungeon Editor'
-VERSION = '0.1.0'
+VERSION = '0.1.1'
 REPO_NAME = 'TW1_DungeonEditor'
 GITHUB_URL = f'https://github.com/MedievalDev/{REPO_NAME}'
 SITE_URL = 'https://alchemy-fox.de/'
@@ -285,27 +285,22 @@ class EditorProcess:
         u32.EnumChildWindows(parent, WNDENUMPROC(cb), 0)
         return found[0] if found else None
 
-    def drive_dialog(self, path, timeout=4.0):
-        """Wartet auf den Dateidialog der Exe und bestätigt ihn mit path."""
-        deadline = time.time() + timeout
-        dlg = None
-        while time.time() < deadline and not dlg:
-            dlg = self.find_dialog()
-            if not dlg:
-                time.sleep(0.05)
+    def fill_dialog(self, path):
+        """Trägt path in den offenen Dateidialog der Exe ein und bestätigt.
+
+        Gibt False zurück, solange der Dialog noch nicht bereit ist. Nie mit
+        sleep warten: Das eingebettete Fenster teilt sich die Eingabe mit dem
+        Tk-Thread, ein blockierter Tk-Thread hält auch den Dialog auf.
+        """
+        dlg = self.find_dialog()
         if not dlg:
             return False
-        edit = None
-        while time.time() < deadline and not edit:
-            edit = self._find_edit(dlg)
-            if not edit:
-                time.sleep(0.05)
+        edit = self._find_edit(dlg)
         if not edit:
             return False
         WM_SETTEXT, WM_COMMAND, IDOK = 0x000C, 0x0111, 1
         u32.SendMessageW(edit, WM_SETTEXT, 0, path)
-        time.sleep(0.1)
-        u32.SendMessageW(dlg, WM_COMMAND, IDOK, 0)
+        u32.PostMessageW(dlg, WM_COMMAND, IDOK, 0)
         return True
 
 
@@ -840,9 +835,16 @@ class App:
                 path=path), parent=self.root)
             return
         self.send('F3')
-        if not self.editor.drive_dialog(path):
+        self._fill_dialog_later(path, time.time() + 10.0)
+
+    def _fill_dialog_later(self, path, deadline):
+        if self.editor.fill_dialog(path):
+            return
+        if time.time() > deadline:
             self.status(tr('Dateidialog nicht gefunden, bitte Datei von Hand wählen'),
                         ERR)
+            return
+        self.root.after(100, lambda: self._fill_dialog_later(path, deadline))
 
     def choose_exe(self):
         from tkinter import filedialog
