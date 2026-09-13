@@ -16,7 +16,11 @@ a = Analysis(
     runtime_hooks=[],
     excludes=['numpy', 'PIL', 'matplotlib', 'pandas', 'scipy', 'IPython',
               'pydoc', 'unittest', 'test', 'lib2to3', 'sqlite3',
-              'xmlrpc', 'multiprocessing', 'test_i18n'],
+              'xmlrpc', 'multiprocessing', 'test_i18n',
+              # not used by the tool, keeps the exe small
+              'ssl', '_ssl', '_hashlib', 'lzma', '_lzma', 'bz2', '_bz2',
+              'decimal', '_decimal', 'http', 'email', 'xml', 'pyexpat',
+              'urllib.request', 'asyncio', 'concurrent', 'sqlite3'],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,
