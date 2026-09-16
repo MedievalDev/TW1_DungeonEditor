@@ -46,7 +46,10 @@ FONT_SMALL = ('Segoe UI', 8)
 FONT_MENU = ('Segoe UI', 10)
 FONT_BRAND = ('Georgia', 12, 'bold')
 FONT_MONO = ('Consolas', 9)
+FONT_H1 = ('Segoe UI Semibold', 15)
 FONT_H2 = ('Segoe UI Semibold', 11)
+FONT_H3 = ('Segoe UI Semibold', 10)
+FONT_GUIDE = ('Segoe UI', 10)
 
 
 def dark_titlebar(window):
@@ -93,6 +96,15 @@ def apply_dark_theme(root):
               background=[('pressed', '#b88d3c'), ('active', GOLD_HI),
                           ('disabled', '#6d5b31')],
               foreground=[('disabled', '#3a3226')])
+    # Menubutton (Aufklapp-Knopf): clam malt ihn beim Hover fast weiss,
+    # die Schrift verschwindet. Immer mit einfaerben.
+    style.configure('TMenubutton', background=PANEL, foreground=INK,
+                    arrowcolor=MUT, padding=(10, 4), relief='flat',
+                    borderwidth=1)
+    style.map('TMenubutton',
+              background=[('pressed', SEL), ('active', HOVER)],
+              foreground=[('active', GOLD_HI), ('disabled', DIM)],
+              arrowcolor=[('active', GOLD_HI)])
     style.configure('Tool.TButton', background=PANEL, padding=(9, 4),
                     borderwidth=1, focusthickness=1, focuscolor=LINE)
     style.map('Tool.TButton', background=[('pressed', SEL), ('active', HOVER)],
@@ -185,6 +197,9 @@ def apply_dark_theme(root):
                     padding=(12, 5), font=FONT_MENU)
     style.map('Menubar.TLabel', background=[('active', SEL)],
               foreground=[('active', GOLD_HI)])
+    style.configure('Help.TLabel', background=PANEL, foreground=GOLD,
+                    font=FONT_BOLD, padding=(4, 5))
+    style.map('Help.TLabel', foreground=[('active', GOLD_HI)])
     style.configure('Toolbar.TFrame', background=PANEL)
     style.configure('ToolSep.TFrame', background=LINE)
     for pattern, value in (

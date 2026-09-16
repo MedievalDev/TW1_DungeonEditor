@@ -12,12 +12,16 @@ import os
 import subprocess
 import sys
 import time
+import threading
 import webbrowser
 import tkinter as tk
 from ctypes import wintypes
 from tkinter import ttk, messagebox
 
+import guidebook
 import theme
+import updater
+from version import VERSION
 from theme import (BG, PANEL, FIELD, CANVAS_BG, LINE, INK, MUT, GOLD, GOLD_HI,
                    OK, ERR, ON_GOLD, FONT, FONT_BOLD, FONT_SMALL, FONT_MONO,
                    FONT_H2, EDITOR_RED, EDITOR_GREEN, EDITOR_VIOLET,
@@ -25,7 +29,6 @@ from theme import (BG, PANEL, FIELD, CANVAS_BG, LINE, INK, MUT, GOLD, GOLD_HI,
 
 APP_NAME = 'TW1 DUNGEON EDITOR'
 APP_TITLE = 'TW1 Dungeon Editor'
-VERSION = '0.1.2'
 REPO_NAME = 'TW1_DungeonEditor'
 GITHUB_URL = f'https://github.com/MedievalDev/{REPO_NAME}'
 SITE_URL = 'https://alchemy-fox.de/'
@@ -348,7 +351,7 @@ def mode_hints(mode):
 MODE_LABELS = {'dungeon': 'Grundriss', 'height': 'Höhe', 'type': 'Typ',
                'objects': 'Objekte', 'lights': 'Lichter'}
 
-GENERAL_KEYS = (('Tab', 'nächster Modus'), ('F2', 'Speichern'),
+GENERAL_KEYS = (('F1', 'Guide'), ('Tab', 'nächster Modus'), ('F2', 'Speichern'),
                 ('F3', 'Öffnen'), ('F4', 'Karten-Offset setzen'),
                 ('F5', 'Konsolenskript exportieren'),
                 ('F6', 'altes Dungeon laden'), ('F8', 'alles zurücksetzen'),
@@ -392,6 +395,15 @@ GUIDE_STEPS = (
              'im Two Worlds Editor auf einem leeren Untergrund-Level aus und '
              'danach @edundgr.txt, damit unpassierbare Bereiche gesperrt werden.',
      'widget': 'btn_export'},
+    {'title': 'Guide und Hilfe',
+     'text': 'F1 öffnet den ausführlichen Guide mit Kapiteln und Suche. Das ? '
+             'neben Titeln erklärt beim Überfahren und springt beim Klick ins '
+             'passende Kapitel.',
+     'widget': 'help_mode'},
+    {'title': 'Checkliste',
+     'text': 'Was im Two Worlds Editor passiert, erledigt das Tool nicht selbst. '
+             'Hake die Schritte hier ab; der Stand wird je Datei gespeichert.',
+     'widget': 'check_box'},
     {'title': 'Statuszeile',
      'text': 'Unten siehst du Modus, geladene Datei und ob es ungespeicherte '
              'Änderungen gibt. Ein Stern im Editor-Titel bedeutet ungespeichert.',
@@ -413,7 +425,7 @@ class Guide:
             self.win.destroy()
         root = self.app.root
         self.win = tk.Toplevel(root, background=PANEL)
-        self.win.title(tr('Guide'))
+        self.win.title(tr('Rundgang'))
         self.win.transient(root)
         self.win.attributes('-topmost', True)
         self.win.resizable(False, False)
@@ -498,11 +510,20 @@ class Guide:
 # ---------------------------------------------------------------- App
 
 class App:
-    def __init__(self):
+    def __init__(self, carry=False):
         global _LANG
         self.cfg = Config()
         _LANG = self.lang = self.cfg.get('lang', 'de')
         self.restart = False
+        self.carry = carry                  # Neuaufbau nach Sprachwechsel
+        self.selftest = os.environ.get('TW1DE_SELFTEST')
+        self.tr = tr                        # fuer guidebook (ctx)
+        self.general_keys = GENERAL_KEYS
+        self.mode_hints = mode_hints
+        self.mode_labels = {k: tr(v) for k, v in MODE_LABELS.items()}
+        self.check_vars = []
+        self._dialogs = {}
+        updater.cleanup_old()
         self.editor = EditorProcess(find_exe(self.cfg.get('exe_path', '')))
         self.mode = 'dungeon'
         self.file = ''
@@ -520,12 +541,22 @@ class App:
         self.root.update_idletasks()
         self.fit_window()
         self.root.deiconify()
+        if self.selftest:
+            self.root.after(50, self.run_selftest)
+            return
         self.root.after(50, self.launch_editor)
+        if not self.carry and self.cfg.get('update_check', True):
+            self.root.after(1500, self.check_updates)
+
+    @property
+    def exe_path(self):
+        return self.editor.exe_path
 
     # -- Aufbau ------------------------------------------------------------
     def build(self):
         self.build_menubar()
         self.build_toolbar()
+        self.build_statusbar()              # vor dem Inhalt packen, sonst verschwindet sie
         body = ttk.Frame(self.root)
         body.pack(fill='both', expand=True)
         self.body = body
@@ -538,15 +569,41 @@ class App:
                                    background=CANVAS_BG, foreground=MUT, font=FONT)
         self.host_label.place(relx=0.5, rely=0.5, anchor='center')
         self.build_panel(body)
-        self.build_statusbar()
         for key in ('F2', 'F3', 'F4', 'F5', 'F6', 'F8'):
-            self.root.bind(f'<{key}>', lambda ev, k=key: self.send(k))
-        self.root.bind('<Tab>', lambda ev: (self.send('TAB'), 'break')[1])
-        self.root.bind('<Prior>', lambda ev: self.send('PGUP'))
-        self.root.bind('<Next>', lambda ev: self.send('PGDN'))
+            self.root.bind(f'<{key}>', self._key(lambda k=key: self.send(k)))
+        self.root.bind('<F1>', self._key(lambda: self.show_guide()))
+        self.root.bind('<Tab>', self._key(lambda: self.send('TAB')))
+        self.root.bind('<Prior>', self._key(lambda: self.send('PGUP')))
+        self.root.bind('<Next>', self._key(lambda: self.send('PGDN')))
         for key, name in (('Left', 'LEFT'), ('Right', 'RIGHT'),
                           ('Up', 'UP'), ('Down', 'DOWN')):
-            self.root.bind(f'<{key}>', lambda ev, k=name: self.send(k))
+            self.root.bind(f'<{key}>', self._key(lambda k=name: self.send(k)))
+
+    def _key(self, fn):
+        """Globale Taste, die einem Eingabefeld mit Fokus nicht wegnimmt."""
+        def handler(ev):
+            w = self.root.focus_get()
+            if isinstance(w, (tk.Entry, tk.Text, ttk.Entry, ttk.Combobox)):
+                return None
+            fn()
+            return 'break'
+        return handler
+
+    def help_mark(self, parent, key, chapter):
+        """Kleines ? : Tooltip beim Überfahren, Klick öffnet das Guide-Kapitel."""
+        lbl = ttk.Label(parent, text='?', style='Help.TLabel', cursor='hand2')
+        theme.Tooltip(lbl, tr(key))
+        lbl.bind('<Enter>', lambda ev: lbl.state(['active']), add='+')
+        lbl.bind('<Leave>', lambda ev: lbl.state(['!active']), add='+')
+        lbl.bind('<Button-1>', lambda ev: self.show_help(key, chapter))
+        return lbl
+
+    def show_help(self, key, chapter):
+        self.status(tr(key))
+        self.show_guide(chapter() if callable(chapter) else chapter)
+
+    def show_guide(self, chapter='start'):
+        guidebook.GuideWindow.show(self, chapter)
 
     def build_menubar(self):
         bar = ttk.Frame(self.root, style='Menubar.TFrame')
@@ -664,18 +721,27 @@ class App:
         m.add_cascade(label=tr('Sprache'), menu=lang)
 
     def _fill_help(self, m):
-        m.add_command(label=tr('Guide starten'), command=self.guide.start)
-        m.add_command(label=tr('Dokumentation'), command=self.show_docs)
+        m.add_command(label=tr('Guide'), accelerator='F1', command=self.show_guide)
+        m.add_command(label=tr('Rundgang starten'), command=self.guide.start)
+        m.add_command(label=tr('Dokumentation (SDK-Readme)'), command=self.show_docs)
         m.add_separator()
         for name, url in LINKS:
             m.add_command(label=f'{name}  ({url})',
                           command=lambda u=url: webbrowser.open(u))
+        m.add_separator()
+        m.add_command(label=tr('Nach Updates suchen'),
+                      command=lambda: self.check_updates(manual=True))
+        m.add_checkbutton(label=tr('Beim Start nach Updates suchen'),
+                          variable=self.update_var, command=self._toggle_update_check)
+        m.add_command(label=tr('Neueste Version auf GitHub'),
+                      command=lambda: webbrowser.open(updater.LATEST_PAGE))
         m.add_separator()
         m.add_command(label=tr('Über'), command=self.show_about)
 
     def build_toolbar(self):
         self.panel_var = tk.BooleanVar(value=self.cfg.get('show_panel', True))
         self.lang_var = tk.StringVar(value=self.lang)
+        self.update_var = tk.BooleanVar(value=self.cfg.get('update_check', True))
         bar = ttk.Frame(self.root, style='Toolbar.TFrame', padding=(6, 4))
         bar.pack(fill='x')
         self.toolbar = bar
@@ -718,12 +784,21 @@ class App:
         panel.pack_propagate(False)
         if self.panel_var.get():
             panel.pack(side='left', fill='y', padx=(4, 8), pady=6)
-        self.panel_title = ttk.Label(panel, style='PanelH2.TLabel')
-        self.panel_title.pack(anchor='w')
+        head = ttk.Frame(panel, style='Panel.TFrame')
+        head.pack(fill='x')
+        self.panel_title = ttk.Label(head, style='PanelH2.TLabel')
+        self.panel_title.pack(side='left')
+        self.help_mode = self.help_mark(
+            head, 'Maus und Tasten des aktuellen Modus. Klick öffnet das Kapitel dazu.',
+            lambda: guidebook.MODE_CHAPTER.get(self.mode, 'start'))
+        self.help_mode.pack(side='left')
         self.hint_box = ttk.Frame(panel, style='Panel.TFrame')
         self.hint_box.pack(fill='x', padx=8)
-        ttk.Label(panel, text=tr('Allgemeine Tasten'), style='PanelTitle.TLabel'
-                  ).pack(anchor='w', pady=(14, 0))
+        row = ttk.Frame(panel, style='Panel.TFrame')
+        row.pack(fill='x', pady=(14, 0))
+        ttk.Label(row, text=tr('Allgemeine Tasten'), style='PanelTitle.TLabel').pack(side='left')
+        self.help_mark(row, 'Die Original-Hotkeys von Dungeons.exe. Sie funktionieren '
+                            'auch ohne die Knöpfe.', 'start').pack(side='left')
         keys = ttk.Frame(panel, style='Panel.TFrame')
         keys.pack(fill='x', padx=8)
         for i, (key, what) in enumerate(GENERAL_KEYS):
@@ -731,18 +806,50 @@ class App:
                       width=16).grid(row=i, column=0, sticky='w', pady=1)
             ttk.Label(keys, text=tr(what), style='PanelMuted.TLabel'
                       ).grid(row=i, column=1, sticky='w', pady=1)
-        ttk.Label(panel, text=tr('Ins Spiel bringen'), style='PanelTitle.TLabel'
-                  ).pack(anchor='w', pady=(14, 0))
+        row = ttk.Frame(panel, style='Panel.TFrame')
+        row.pack(fill='x', pady=(14, 0))
+        ttk.Label(row, text=tr('Checkliste: ins Spiel bringen'),
+                  style='PanelTitle.TLabel').pack(side='left')
+        self.help_mark(row, 'Diese Schritte passieren im Two Worlds Editor. Das Tool '
+                            'merkt sich die Haken je Datei.', 'export').pack(side='left')
+        self.check_box = ttk.Frame(panel, style='Panel.TFrame', padding=(8, 0))
+        self.check_box.pack(fill='x')
+        for i, text in enumerate(CHECKLIST):
+            var = tk.BooleanVar(value=False)
+            ttk.Checkbutton(self.check_box, text=tr(text), variable=var,
+                            style='Panel.TCheckbutton',
+                            command=self.save_checklist).pack(anchor='w', pady=1)
+            self.check_vars.append(var)
         ttk.Label(panel, style='PanelMuted.TLabel', wraplength=270, justify='left',
-                  padding=(8, 0),
-                  text=tr('1. Export (F5) erzeugt ein Skript mit createEd-Zeilen.\n'
-                          '2. Im Two Worlds Editor ein leeres Untergrund-Level '
-                          'öffnen und das Skript ausführen.\n'
-                          '3. Danach @edundgr.txt ausführen, damit unpassierbare '
-                          'Bereiche gesperrt werden.\n'
-                          '4. Gegner, Truhen und Marker im Two Worlds Editor setzen.')
-                  ).pack(anchor='w')
+                  padding=(8, 4),
+                  text=tr('Schritte 2 bis 5 folgen den SDK-Notizen und sind noch '
+                          'nicht bis ins Spiel nachgespielt.')).pack(anchor='w')
+        self.load_checklist()
         self.paint_hints()
+
+    def _check_key(self):
+        return os.path.normcase(self.file) if self.file else ''
+
+    def load_checklist(self):
+        done = self.cfg.get('checklists', {}).get(self._check_key(), [])
+        for i, var in enumerate(self.check_vars):
+            var.set(bool(done[i]) if i < len(done) else False)
+        self.paint_checklist()
+
+    def save_checklist(self):
+        lists = self.cfg.setdefault('checklists', {})
+        lists[self._check_key()] = [bool(v.get()) for v in self.check_vars]
+        self.cfg.save()
+        self.paint_checklist()
+
+    def paint_checklist(self):
+        if not hasattr(self, 'st_check'):
+            return
+        n = sum(1 for v in self.check_vars if v.get())
+        total = len(self.check_vars)
+        self.st_check.configure(
+            text=tr('Checkliste {n}/{total}').format(n=n, total=total),
+            style='StatusOk.TLabel' if n == total else 'Status.TLabel')
 
     def paint_hints(self):
         for child in self.hint_box.winfo_children():
@@ -780,6 +887,11 @@ class App:
         ttk.Label(bar, text='|', style='StatusSep.TLabel').pack(side='left')
         self.st_file = ttk.Label(bar, style='Status.TLabel')
         self.st_file.pack(side='left')
+        ttk.Label(bar, text='|', style='StatusSep.TLabel').pack(side='left')
+        self.st_check = ttk.Label(bar, style='Status.TLabel', cursor='hand2')
+        self.st_check.pack(side='left')
+        self.st_check.bind('<Button-1>', lambda ev: self.show_guide('export'))
+        theme.Tooltip(self.st_check, tr('Offene Schritte bis ins Spiel. Klick öffnet das Kapitel.'))
         self.st_msg = ttk.Label(bar, style='Status.TLabel')
         self.st_msg.pack(side='right')
 
@@ -800,8 +912,12 @@ class App:
         exe = self.editor.exe_path
         if not exe:
             self.host_label.configure(
-                text=tr('Dungeons.exe aus dem Two Worlds SDK nicht gefunden.\n\n'
-                        'Datei > Editor-Exe wählen'), foreground=ERR)
+                text=tr('Dungeons.exe aus dem Two Worlds SDK nicht gefunden.'),
+                foreground=ERR)
+            self.host_label.place(relx=0.5, rely=0.45, anchor='center')
+            btn = ttk.Button(self.host, text=tr('Dungeons.exe wählen ...'),
+                             style='Accent.TButton', command=self.choose_exe)
+            btn.place(relx=0.5, rely=0.53, anchor='center')
             self.root.after(300, self.choose_exe)
             return
         if exe != self.cfg.get('exe_path'):
@@ -825,10 +941,15 @@ class App:
         return 'break'
 
     def new_file(self):
-        if self.modified and not messagebox.askyesno(
-                APP_TITLE, tr('Ungespeicherte Änderungen verwerfen?'), parent=self.root):
+        if not self.confirm_discard():
             return
         self.send('F8')
+
+    def relaunch(self):
+        self.cfg['reopen'] = self.file
+        self.cfg.save()
+        self.restart = True
+        self.shutdown()
 
     def open_path(self, path):
         if not os.path.isfile(path):
@@ -886,7 +1007,9 @@ class App:
         if not self.editor.alive():
             self.status(tr('Editor wurde beendet'), ERR)
             self.host_label.configure(text=tr('Editor wurde beendet.'), foreground=ERR)
-            self.host_label.place(relx=0.5, rely=0.5, anchor='center')
+            self.host_label.place(relx=0.5, rely=0.45, anchor='center')
+            ttk.Button(self.host, text=tr('Editor neu starten'), style='Accent.TButton',
+                       command=self.relaunch).place(relx=0.5, rely=0.53, anchor='center')
             return
         mode, file, modified = self.editor.state()
         if mode != self.mode:
@@ -898,6 +1021,7 @@ class App:
             self.file = file
             if file and os.path.isfile(file):
                 self.cfg.add_recent(os.path.normpath(file))
+            self.load_checklist()
         self.modified = modified
         self.st_mode.configure(text=tr('Modus: {mode}').format(
             mode=tr(MODE_LABELS[mode])))
@@ -944,10 +1068,10 @@ class App:
         except Exception:
             text = tr('Dungeons readme.txt nicht gefunden:\n{path}').format(
                 path=readme_path(self.editor.exe_path))
-        win = tk.Toplevel(self.root, background=BG)
-        win.title(tr('Dokumentation'))
-        win.transient(self.root)
-        theme.dark_titlebar(win)
+        win = self._single('docs')
+        if win is None:
+            return
+        win.title(tr('Dokumentation (SDK-Readme)'))
         win.geometry('720x640')
         box = tk.Text(win, font=FONT_MONO, wrap='word', padx=10, pady=8)
         sb = ttk.Scrollbar(win, orient='vertical', command=box.yview)
@@ -958,11 +1082,12 @@ class App:
         box.configure(state='disabled')
 
     def show_about(self):
-        win = tk.Toplevel(self.root, background=BG)
+        win = self._single('about')
+        if win is None:
+            return
         win.title(tr('Über'))
-        win.transient(self.root)
         win.resizable(False, False)
-        theme.dark_titlebar(win)
+        win.bind('<Return>', lambda e: win.destroy())
         frame = ttk.Frame(win, padding=16)
         frame.pack(fill='both', expand=True)
         ttk.Label(frame, text=APP_TITLE, style='Brand.TLabel').pack(anchor='w')
@@ -983,16 +1108,116 @@ class App:
         ttk.Button(frame, text=tr('Schließen'), style='Accent.TButton',
                    command=win.destroy).pack(anchor='e', pady=(14, 0))
 
+    def _single(self, key):
+        """Werkzeugfenster nur einmal: vorhandenes nach vorn holen (None), sonst neu."""
+        old = self._dialogs.get(key)
+        if old is not None:
+            try:
+                old.deiconify()
+                old.lift()
+                return None
+            except tk.TclError:
+                pass
+        win = tk.Toplevel(self.root, background=BG)
+        win.transient(self.root)
+        theme.dark_titlebar(win)
+        win.bind('<Escape>', lambda e: win.destroy())
+        self._dialogs[key] = win
+        win.bind('<Destroy>', lambda e: self._dialogs.pop(key, None)
+                 if e.widget is win else None, add='+')
+        return win
+
+    # -- Updates -----------------------------------------------------------
+    def _toggle_update_check(self):
+        self.cfg['update_check'] = bool(self.update_var.get())
+        self.cfg.save()
+
+    def check_updates(self, manual=False):
+        """GitHub im Thread fragen. Beim Start still, aus dem Menü mit Antwort."""
+        results = []
+        updater.check_async(lambda info, err: results.append((info, err)))
+
+        def poll():
+            if not results:
+                self.root.after(200, poll)
+                return
+            info, err = results[0]
+            if err is not None or info is None:
+                if manual:
+                    messagebox.showwarning(tr('Update'), tr(
+                        'GitHub war nicht erreichbar: {err}').format(err=err), parent=self.root)
+                return
+            if not updater.is_newer(info['tag']):
+                if manual:
+                    messagebox.showinfo(tr('Update'), tr(
+                        'Du hast die neueste Version ({version}).').format(version=VERSION),
+                        parent=self.root)
+                return
+            if not manual and self.cfg.get('update_skip') == info['tag']:
+                return
+            self.status(tr('Update verfügbar: Version {version}').format(
+                version=info['version']), OK)
+            UpdateWindow(self, info)
+        self.root.after(200, poll)
+
+    # -- Selbsttest ----------------------------------------------------------
+    def run_selftest(self):
+        """TW1DE_SELFTEST=<datei>: Kernpunkte prüfen, eine Zeile schreiben, beenden."""
+        try:
+            ctx_ok = all(fn(self) for _c, _t, fn in guidebook.CHAPTERS)
+            line = (f'version={VERSION} https={self._selftest_https()} '
+                    f'exe={"found" if self.editor.exe_path else "missing"} '
+                    f'guide={"ok" if ctx_ok else "empty"} '
+                    f'chapters={len(guidebook.CHAPTERS)}')
+            with open(self.selftest, 'w', encoding='utf-8') as fh:
+                fh.write(line + '\n')
+            if os.environ.get('TW1DE_SELFTEST_UPDATE') and updater.frozen_exe():
+                self._selftest_update()
+                return
+        except Exception as e:
+            with open(self.selftest, 'a', encoding='utf-8') as fh:
+                fh.write(f'selftest failed: {e!r}\n')
+        self.root.after(50, self.root.destroy)
+
+    def _selftest_update(self):
+        """Tausch-Test nach PY_TOOL_DESIGN 9.5: neuestes Release laden und tauschen."""
+        exe = updater.frozen_exe()
+        info = updater.fetch_latest()
+        updater.download(info, exe + '.new')
+        updater.start_swap(exe, exe + '.new')
+        with open(self.selftest, 'a', encoding='utf-8') as fh:
+            fh.write(f'swap started to {info["tag"]} pid={os.getpid()}\n')
+        self.root.after(300, self.root.destroy)
+
+    @staticmethod
+    def _selftest_https():
+        """Der Update-Check braucht diese Module im Exe-Build."""
+        try:
+            import http.client  # noqa: F401
+            import ssl  # noqa: F401
+            import urllib.request  # noqa: F401
+            return 'ok'
+        except ImportError as e:
+            return f'missing:{e.name}'
+
     # -- Ende --------------------------------------------------------------
     def confirm_discard(self):
-        """True, wenn nichts ungespeichert ist oder der Nutzer verwerfen will."""
-        return not self.modified or messagebox.askyesno(
-            APP_TITLE, tr('Ungespeicherte Änderungen verwerfen?'), parent=self.root)
+        """True, wenn es weitergehen darf. Ja speichert (Dialog der Exe), Nein verwirft."""
+        if not self.modified:
+            return True
+        answer = messagebox.askyesnocancel(
+            APP_TITLE, tr('Es gibt ungespeicherte Änderungen. Jetzt speichern?\n\n'
+                          'Ja: Speichern-Dialog öffnen\nNein: verwerfen\nAbbrechen: zurück'),
+            parent=self.root)
+        if answer is None:
+            return False
+        if answer:
+            self.send('F2')
+            return False
+        return True
 
     def on_close(self):
-        if self.modified and not messagebox.askyesno(
-                APP_TITLE, tr('Ungespeicherte Änderungen verwerfen und beenden?'),
-                parent=self.root):
+        if not self.confirm_discard():
             return
         self.shutdown()
 
@@ -1000,18 +1225,137 @@ class App:
         self.cfg['geometry'] = self.root.geometry()
         self.cfg.save()
         self.editor.stop()
+        guidebook.GuideWindow._open = None
         self.root.destroy()
 
     def run(self):
         self.root.mainloop()
 
 
+class UpdateWindow:
+    """Neueres Release: Notizen, jetzt aktualisieren, später, überspringen."""
+
+    def __init__(self, app, info):
+        self.app = app
+        self.info = info
+        self.win = tk.Toplevel(app.root)
+        self.win.title(tr('Update'))
+        self.win.transient(app.root)
+        self.win.geometry('620x480')
+        theme.dark_titlebar(self.win)
+        self.win.bind('<Escape>', lambda e: self.win.destroy())
+        f = ttk.Frame(self.win, padding=16)
+        f.pack(fill='both', expand=True)
+        ttk.Label(f, text=tr('Version {version} ist da').format(version=info['version']),
+                  style='Brand.TLabel').pack(anchor='w')
+        ttk.Label(f, text=tr('Du hast {current}. Das Update lädt die Exe von GitHub, prüft '
+                             'ihre SHA-256-Prüfsumme, schließt das Tool und startet Version '
+                             '{version}. Die alte Exe bleibt bis zum nächsten Start als .old '
+                             'liegen.').format(current=VERSION, version=info['version']),
+                  style='Muted.TLabel', wraplength=580, justify='left').pack(anchor='w', pady=(2, 8))
+        txt = tk.Text(f, wrap='word', font=FONT, height=12)
+        txt.pack(fill='both', expand=True)
+        txt.insert('1.0', info['notes'].replace('\r\n', '\n').split('\n---')[0].strip()
+                   or info['page'])
+        txt.configure(state='disabled')
+        self.status = ttk.Label(f, text='', style='Muted.TLabel', wraplength=580, justify='left')
+        self.status.pack(anchor='w', pady=(8, 0))
+        self.bar = ttk.Progressbar(f, maximum=100)
+        btns = ttk.Frame(f)
+        btns.pack(fill='x', side='bottom', pady=(10, 0))
+        ttk.Button(btns, text=tr('Später'), command=self.win.destroy).pack(side='right')
+        ttk.Button(btns, text=tr('Diese Version überspringen'), command=self.skip
+                   ).pack(side='right', padx=6)
+        self.exe = updater.frozen_exe()
+        self.go = ttk.Button(btns, text=tr('Jetzt aktualisieren') if self.exe
+                             else tr('Release-Seite öffnen'),
+                             style='Accent.TButton', command=self.start)
+        self.go.pack(side='right')
+        ttk.Button(btns, text=tr('Auf GitHub ansehen'),
+                   command=lambda: webbrowser.open(info['page'])).pack(side='left')
+        if self.exe and not info.get('sha256'):
+            self.status.configure(text=tr('Dieses Release hat keine Prüfsumme. Ohne Prüfsumme '
+                                          'installiert das Tool nichts; "Jetzt aktualisieren" '
+                                          'öffnet die Release-Seite.'))
+
+    def skip(self):
+        self.app.cfg['update_skip'] = self.info['tag']
+        self.app.cfg.save()
+        self.win.destroy()
+
+    def start(self):
+        if not self.exe or not self.info.get('sha256') or not self.info.get('url'):
+            webbrowser.open(self.info['page'])
+            if not self.exe:
+                self.win.destroy()
+            return
+        if not self.app.confirm_discard():
+            return
+        self.go.state(['disabled'])
+        self.bar.pack(fill='x', pady=(6, 0), before=self.status)
+        self.status.configure(text=tr('Lade ...'))
+        new = self.exe + '.new'
+        state = {}
+
+        def progress(done, total):
+            state['p'] = (done, total)
+
+        def work():
+            try:
+                updater.download(self.info, new, progress)
+                state['ok'] = True
+            except Exception as e:
+                state['err'] = e
+        threading.Thread(target=work, daemon=True).start()
+
+        def poll():
+            try:
+                if not self.win.winfo_exists():
+                    return
+            except tk.TclError:
+                return
+            done, total = state.get('p', (0, 0))
+            if total:
+                self.bar.configure(value=100 * done / total)
+                self.status.configure(text=tr('Lade {done} von {total} MB ...').format(
+                    done=done // 1048576, total=max(1, total // 1048576)))
+            if 'err' in state:
+                self.go.state(['!disabled'])
+                self.status.configure(text=tr(
+                    'Update fehlgeschlagen, nichts wurde geändert: {err}').format(err=state['err']))
+                return
+            if not state.get('ok'):
+                self.win.after(150, poll)
+                return
+            self.status.configure(text=tr('Prüfsumme stimmt. Das Tool schließt sich und '
+                                          'startet die neue Version.'))
+            try:
+                updater.start_swap(self.exe, new)
+            except OSError as e:
+                self.status.configure(text=tr(
+                    'Update fehlgeschlagen, nichts wurde geändert: {err}').format(err=e))
+                self.go.state(['!disabled'])
+                return
+            self.win.after(600, self.app.shutdown)
+        poll()
+
+
+CHECKLIST = ('Offset gesetzt (F4), exportiert (F5)',
+             'Skript in Spielordner kopiert',
+             'Leeres Untergrund-Level geöffnet',
+             'Skript mit @datei.txt ausgeführt',
+             '@edundgr.txt ausgeführt',
+             'Gegner, Truhen und Marker gesetzt')
+
+
 def main():
+    carry = False
     while True:
-        app = App()
+        app = App(carry=carry)
         app.run()
         if not app.restart:
             break
+        carry = True
 
 
 # ---------------------------------------------------------------- Englisch
@@ -1086,8 +1430,57 @@ EN = {
     'Modus: {mode}': 'Mode: {mode}', 'Farben im Editor': 'Colours in the editor',
     'Neue Datei': 'New file', '(ungespeichert)': '(unsaved)',
     'Editor wird gestartet ...': 'Starting editor ...',
-    'Dungeons.exe aus dem Two Worlds SDK nicht gefunden.\n\nDatei > Editor-Exe wählen':
-        'Dungeons.exe from the Two Worlds SDK not found.\n\nFile > Choose editor exe',
+    'Dungeons.exe aus dem Two Worlds SDK nicht gefunden.':
+        'Dungeons.exe from the Two Worlds SDK not found.',
+    'Dungeons.exe wählen ...': 'Choose Dungeons.exe ...',
+    'Editor neu starten': 'Restart editor',
+    'Es gibt ungespeicherte Änderungen. Jetzt speichern?\n\nJa: Speichern-Dialog öffnen\nNein: verwerfen\nAbbrechen: zurück':
+        'There are unsaved changes. Save now?\n\nYes: open the save dialog\nNo: discard\nCancel: go back',
+    'F1': 'F1', 'Guide und Hilfe': 'Guide and help', 'Checkliste': 'Checklist',
+    'F1 öffnet den ausführlichen Guide mit Kapiteln und Suche. Das ? neben Titeln erklärt beim Überfahren und springt beim Klick ins passende Kapitel.':
+        'F1 opens the full guide with chapters and search. The ? next to titles explains on hover and jumps to the matching chapter on click.',
+    'Was im Two Worlds Editor passiert, erledigt das Tool nicht selbst. Hake die Schritte hier ab; der Stand wird je Datei gespeichert.':
+        'What happens in the Two Worlds Editor is not done by the tool. Tick the steps here; the state is saved per file.',
+    'Checkliste {n}/{total}': 'Checklist {n}/{total}',
+    'Checkliste: ins Spiel bringen': 'Checklist: into the game',
+    'Offene Schritte bis ins Spiel. Klick öffnet das Kapitel.':
+        'Open steps until the dungeon is in the game. Click opens the chapter.',
+    'Schritte 2 bis 5 folgen den SDK-Notizen und sind noch nicht bis ins Spiel nachgespielt.':
+        'Steps 2 to 5 follow the SDK notes and have not been replayed all the way into the game yet.',
+    'Maus und Tasten des aktuellen Modus. Klick öffnet das Kapitel dazu.':
+        'Mouse and keys of the current mode. Click opens its chapter.',
+    'Die Original-Hotkeys von Dungeons.exe. Sie funktionieren auch ohne die Knöpfe.':
+        'The original hotkeys of Dungeons.exe. They work without the buttons too.',
+    'Diese Schritte passieren im Two Worlds Editor. Das Tool merkt sich die Haken je Datei.':
+        'These steps happen in the Two Worlds Editor. The tool remembers the ticks per file.',
+    'Offset gesetzt (F4), exportiert (F5)': 'Offset set (F4) and exported (F5)',
+    'Skript in Spielordner kopiert': 'Script copied into the game folder',
+    'Leeres Untergrund-Level geöffnet': 'Empty underground level opened',
+    'Skript mit @datei.txt ausgeführt': 'Script run with @file.txt',
+    '@edundgr.txt ausgeführt': '@edundgr.txt run',
+    'Gegner, Truhen und Marker gesetzt': 'Enemies, chests and markers placed',
+    'Rundgang': 'Tour', 'Rundgang starten': 'Start tour',
+    'Dokumentation (SDK-Readme)': 'Documentation (SDK readme)',
+    'Nach Updates suchen': 'Check for updates',
+    'Beim Start nach Updates suchen': 'Check for updates on start',
+    'Neueste Version auf GitHub': 'Latest version on GitHub',
+    'Update': 'Update', 'Version {version} ist da': 'Version {version} is out',
+    'Du hast {current}. Das Update lädt die Exe von GitHub, prüft ihre SHA-256-Prüfsumme, schließt das Tool und startet Version {version}. Die alte Exe bleibt bis zum nächsten Start als .old liegen.':
+        'You have {current}. The update downloads the exe from GitHub, checks its SHA-256 checksum, closes the tool and starts version {version}. The old exe stays as .old until the next start.',
+    'Jetzt aktualisieren': 'Update now', 'Release-Seite öffnen': 'Open release page',
+    'Später': 'Later', 'Diese Version überspringen': 'Skip this version',
+    'Auf GitHub ansehen': 'View on GitHub', 'Lade ...': 'Downloading ...',
+    'Lade {done} von {total} MB ...': 'Downloading {done} of {total} MB ...',
+    'Prüfsumme stimmt. Das Tool schließt sich und startet die neue Version.':
+        'Checksum matches. The tool closes and starts the new version.',
+    'Update fehlgeschlagen, nichts wurde geändert: {err}': 'Update failed, nothing was changed: {err}',
+    'Dieses Release hat keine Prüfsumme. Ohne Prüfsumme installiert das Tool nichts; "Jetzt aktualisieren" öffnet die Release-Seite.':
+        'This release has no checksum. Without a checksum the tool installs nothing; "Update now" opens the release page.',
+    'GitHub war nicht erreichbar: {err}': 'GitHub could not be reached: {err}',
+    'Du hast die neueste Version ({version}).': 'You have the latest version ({version}).',
+    'Update verfügbar: Version {version}': 'Update available: version {version}',
+    'TW1 Dungeon Editor Guide': 'TW1 Dungeon Editor Guide', 'Suche': 'Search',
+    '{n} Kapitel': '{n} chapters',
     'Neben dieser Exe fehlen dungeon.txt oder der Data-Ordner. '
     'Bitte Dungeons.exe aus dem Ordner TwoWorldsSDK/Dungeons wählen.':
         'dungeon.txt or the Data folder is missing next to this exe. '

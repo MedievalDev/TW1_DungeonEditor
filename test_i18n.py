@@ -16,11 +16,23 @@ def literal_keys():
     tree = ast.parse(src)
     keys = set()
     for node in ast.walk(tree):
-        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
-                and node.func.id == 'tr' and node.args
-                and isinstance(node.args[0], ast.Constant)
-                and isinstance(node.args[0].value, str)):
+        if not isinstance(node, ast.Call):
+            continue
+        name = (node.func.id if isinstance(node.func, ast.Name) else
+                node.func.attr if isinstance(node.func, ast.Attribute) else '')
+        # tr('...') und self.help_mark(parent, '...', kapitel)
+        pos = {'tr': 0, 'help_mark': 1}.get(name)
+        if (pos is not None and len(node.args) > pos
+                and isinstance(node.args[pos], ast.Constant)
+                and isinstance(node.args[pos].value, str)):
+            keys.add(node.args[pos].value)
+    guide = open(os.path.join(HERE, 'guidebook.py'), encoding='utf-8').read()
+    for node in ast.walk(ast.parse(guide)):
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr == 'tr' and node.args
+                and isinstance(node.args[0], ast.Constant)):
             keys.add(node.args[0].value)
+    keys.update(de.CHECKLIST)
     for step in de.GUIDE_STEPS:
         keys.add(step['title'])
         keys.add(step['text'])

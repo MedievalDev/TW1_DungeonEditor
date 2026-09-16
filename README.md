@@ -1,12 +1,14 @@
 # TW1 Dungeon Editor
 
-Version 0.1.2
+Version 0.2.0
 
 A usable window around the original **Dungeons.exe** from the Two Worlds SDK
 (Reality Pump, 2007). The original dungeons of Two Worlds were built with this
 editor, but it has no interface at all, only hotkeys. This tool embeds it and
-adds a menu bar, a toolbar, a hint panel, a status bar and a first-start guide.
-English and German, switchable at runtime.
+adds a menu bar, a toolbar, a hint panel, a status bar, a first-start tour, a
+full guide window (F1) and a checklist for the steps in the Two Worlds Editor.
+It checks GitHub for new versions and can update itself. English and German,
+switchable at runtime.
 
 Deutsche Anleitung weiter unten.
 
@@ -21,9 +23,9 @@ Deutsche Anleitung weiter unten.
 ## Install
 
 **Option A, exe (no Python needed):**
-Download `TW1DungeonEditor.exe` from the
-[Releases](https://github.com/MedievalDev/TW1_DungeonEditor/releases) page and
-start it. On the first start it asks for `Dungeons.exe`. Pick the one in
+Download [`TW1DungeonEditor.exe`](https://github.com/MedievalDev/TW1_DungeonEditor/releases/latest/download/TW1DungeonEditor.exe)
+from the [latest release](https://github.com/MedievalDev/TW1_DungeonEditor/releases/latest)
+and start it. Windows 10 or 11. On the first start it asks for `Dungeons.exe`. Pick the one in
 `TwoWorldsSDK\Dungeons`. Settings are stored in `%LOCALAPPDATA%\TW1DungeonEditor`.
 
 **Option B, Python:**
@@ -49,6 +51,20 @@ folder inside `TwoWorldsSDK\Dungeons`, the editor is found automatically.
 The SDK folder `Dungeons\Dungeons` contains the grids of the original game
 dungeons (`1.txt` to `15.txt`). Open one of them to see how they were built.
 
+## Help inside the tool
+
+- **F1** opens the guide window: chapters for every mode, export and the way
+  into the game, reference tables and troubleshooting, with search. Tables are
+  generated from the tool's own data and the `dungeon.txt` of your SDK, each
+  with its source.
+- The **?** next to panel titles explains on hover and opens the matching
+  chapter on click.
+- **Checklist** in the hint panel for the steps that happen in the Two Worlds
+  Editor. Ticks are stored per grid file.
+- **Help > Check for updates**; on start the tool checks GitHub quietly. An
+  update is only installed after its SHA-256 matches the digest GitHub stores
+  for the asset. Can be switched off in the Help menu.
+
 ## How it works
 
 The tool starts `Dungeons.exe`, reparents its window into a Tk frame and sends
@@ -69,8 +85,18 @@ py -m pip install pyinstaller
 build_exe.bat
 ```
 
-Result: `dist\TW1DungeonEditor.exe`. `py test_i18n.py` checks that every German
-text has an English translation.
+Result: `dist\TW1DungeonEditor.exe`, just under 10 MB (the spec drops Tcl time
+zones, CJK encodings and the UCRT, which Windows 10 and 11 ship).
+
+Tests:
+
+- `py test_i18n.py`: every German text has an English translation.
+- `py test_guide.py`: every guide table names its source, the SDK tables read
+  the real `dungeon.txt`, version compare and update batch.
+- Selftest of a build: set `TW1DE_SELFTEST=<file>` and start the exe; it writes
+  `version=... https=ok exe=found guide=ok` and quits. With
+  `TW1DE_SELFTEST_UPDATE=1` it also downloads the latest release and swaps
+  itself (the update test from the design rules, only in a test folder).
 
 ---
 
@@ -93,6 +119,9 @@ Werkzeugleiste, Hinweis-Panel, Statuszeile und einen Guide beim ersten Start.
   [Releases](https://github.com/MedievalDev/TW1_DungeonEditor/releases)
   herunterladen und starten. Beim ersten Start `TwoWorldsSDK\Dungeons\Dungeons.exe`
   auswählen.
+- **Hilfe im Tool:** F1 öffnet den Guide mit Kapiteln und Suche, das `?` an
+  Titeln springt ins passende Kapitel, die Checkliste merkt sich je Datei, was
+  im Two Worlds Editor erledigt ist. Neue Versionen meldet das Tool selbst.
 - **Python:** Python 3.10+ mit tkinter. Repo herunterladen und
   `TW1 Dungeon Editor.bat` starten. Liegt der Ordner in `TwoWorldsSDK\Dungeons`,
   wird der Editor automatisch gefunden.
