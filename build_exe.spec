@@ -10,13 +10,15 @@ a = Analysis(
     ['dungeon_editor.py'],
     pathex=['.'],
     binaries=[],
-    datas=[],
-    hiddenimports=['theme', 'guidebook', 'updater', 'version'],
+    # untested.json is read at runtime from sys._MEIPASS (resource()).
+    datas=[('untested.json', '.')],
+    hiddenimports=['theme', 'guidebook', 'updater', 'version',
+                   'foxfeedback', 'foxfeedback_ui'],
     hookspath=[],
     runtime_hooks=[],
     excludes=['numpy', 'PIL', 'matplotlib', 'pandas', 'scipy', 'IPython',
               'pydoc', 'unittest', 'test', 'lib2to3', 'sqlite3',
-              'xmlrpc', 'multiprocessing', 'test_i18n', 'test_guide',
+              'xmlrpc', 'multiprocessing', 'test_i18n', 'test_guide', 'tests',
               # not used by the tool, keeps the exe small. Do NOT add ssl,
               # http, email or urllib here: the update check needs them
               # (PY_TOOL_DESIGN.md 9.3).

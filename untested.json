@@ -1,0 +1,108 @@
+{
+  "format": 1,
+  "tests": [
+    {
+      "id": "script-in-editor",
+      "since": "0.2.0",
+      "needs_run": false,
+      "experimental": "ingame",
+      "title": {
+        "de": "Exportiertes Skript im Two Worlds Editor ausführen",
+        "en": "Run the exported script in the Two Worlds Editor"
+      },
+      "why": {
+        "de": "Das Skript hat dasselbe Format wie die Original-Skripte im SDK (gemessen). Ob der Two Worlds Editor daraus wirklich Wände und Gänge baut, hat noch niemand mit diesem Tool ausprobiert.",
+        "en": "The script has the same format as the SDK's own scripts (measured). Whether the Two Worlds Editor really builds walls and corridors from it has not been tried with this tool yet."
+      },
+      "steps": {
+        "de": [
+          "Im Dungeon Editor Neu wählen und zwei Räume mit einem Gang malen, bis keine Kachel rot, grün oder violett ist.",
+          "Offset (F4) setzen und mit Export (F5) als test_src.txt speichern.",
+          "test_src.txt in den Spielordner von Two Worlds kopieren (dort, wo TwoWorlds.exe liegt).",
+          "Den Two Worlds Editor starten und ein leeres Untergrund-Level öffnen.",
+          "In der Konsole des Editors @test_src.txt eingeben und Enter drücken.",
+          "Auf die Stelle des Offsets schauen und das Ergebnis hier wählen."
+        ],
+        "en": [
+          "In the Dungeon Editor choose New and paint two rooms with a corridor until no tile is red, green or violet.",
+          "Set the offset (F4) and save with Export (F5) as test_src.txt.",
+          "Copy test_src.txt into the Two Worlds game folder (where TwoWorlds.exe is).",
+          "Start the Two Worlds Editor and open an empty underground level.",
+          "Type @test_src.txt in the editor console and press Enter.",
+          "Look at the offset position and pick the result here."
+        ]
+      },
+      "expect": {
+        "de": "Im Two Worlds Editor stehen Wände und Gänge in derselben Form wie das gemalte Raster, zwei Räume mit einem Gang. Die Konsole meldet keinen Fehler.",
+        "en": "The Two Worlds Editor shows walls and corridors in the same shape as the painted grid: two rooms with a corridor. The console reports no error."
+      }
+    },
+    {
+      "id": "dungeon-walkable",
+      "since": "0.2.0",
+      "needs_run": false,
+      "experimental": "ingame",
+      "title": {
+        "de": "Das Dungeon im Spiel begehen",
+        "en": "Walk the dungeon in the game"
+      },
+      "why": {
+        "de": "Nach dem Skript sperrt @edundgr.txt laut SDK-Notizen die unpassierbaren Stellen. Ob man das fertige Dungeon danach im Spiel betreten kann, ist noch nicht geprüft.",
+        "en": "After the script, @edundgr.txt disables the impassable places according to the SDK notes. Whether the finished dungeon can then be entered in the game has not been checked yet."
+      },
+      "steps": {
+        "de": [
+          "Zuerst den Test \"Exportiertes Skript im Two Worlds Editor ausführen\" machen.",
+          "Im selben Level in der Konsole @edundgr.txt ausführen (die Datei liegt im SDK-Ordner Game und muss im Spielordner liegen).",
+          "Einen Eingang setzen, zum Beispiel einen Teleport-Marker, und das Level speichern.",
+          "Das Spiel starten und in das Dungeon gehen.",
+          "Durch beide Räume und den Gang laufen und das Ergebnis hier wählen."
+        ],
+        "en": [
+          "First do the test \"Run the exported script in the Two Worlds Editor\".",
+          "In the same level run @edundgr.txt in the console (the file is in the SDK folder Game and must be in the game folder).",
+          "Place an entrance, for example a teleport marker, and save the level.",
+          "Start the game and go into the dungeon.",
+          "Walk through both rooms and the corridor and pick the result here."
+        ]
+      },
+      "expect": {
+        "de": "Man kann durch beide Räume und den Gang laufen. Die Wände halten auf, man fällt nirgends durch den Boden und bleibt nirgends hängen.",
+        "en": "You can walk through both rooms and the corridor. The walls stop you, you never fall through the floor and never get stuck."
+      }
+    },
+    {
+      "id": "own-object-dungeontxt",
+      "since": "0.2.0",
+      "needs_run": false,
+      "title": {
+        "de": "Eigenes Objekt aus dungeon.txt im Two Worlds Editor",
+        "en": "Own object from dungeon.txt in the Two Worlds Editor"
+      },
+      "why": {
+        "de": "Die Objektgruppen stehen in dungeon.txt neben der Dungeons.exe. Ob ein selbst eingetragenes Objekt im Skript landet und im Two Worlds Editor erscheint, ist ungeprüft.",
+        "en": "The object groups live in dungeon.txt next to Dungeons.exe. Whether a self-added object ends up in the script and appears in the Two Worlds Editor is unverified."
+      },
+      "steps": {
+        "de": [
+          "Eine Sicherung von dungeon.txt anlegen.",
+          "In dungeon.txt in der Gruppe Addons Group1 eine Zeile nach dem Muster der vorhandenen ergänzen, mit einer Objekt-ID aus dem Spiel.",
+          "Den Dungeon Editor neu starten, ein Dungeon malen und im Modus Objekte das neue Objekt setzen.",
+          "Exportieren und das Skript wie im ersten Test im Two Worlds Editor ausführen.",
+          "Das Ergebnis hier wählen und danach die Sicherung von dungeon.txt zurückspielen."
+        ],
+        "en": [
+          "Back up dungeon.txt.",
+          "In dungeon.txt add a line to the group Addons Group1, following the existing lines, with an object id from the game.",
+          "Restart the Dungeon Editor, paint a dungeon and place the new object in Objects mode.",
+          "Export and run the script in the Two Worlds Editor as in the first test.",
+          "Pick the result here and then restore the backup of dungeon.txt."
+        ]
+      },
+      "expect": {
+        "de": "Das neue Objekt steht im Two Worlds Editor an der Stelle, an der es im Dungeon Editor gesetzt wurde.",
+        "en": "The new object stands in the Two Worlds Editor where it was placed in the Dungeon Editor."
+      }
+    }
+  ]
+}

@@ -18,6 +18,7 @@ import tkinter as tk
 from ctypes import wintypes
 from tkinter import ttk, messagebox
 
+import foxfeedback_ui
 import guidebook
 import theme
 import updater
@@ -38,6 +39,24 @@ LINKS = (('GitHub-Repo', GITHUB_URL), ('Alchemy Fox', SITE_URL),
          ('Guide-Seite', GUIDE_URL), ('Community', COMMUNITY_URL))
 
 FROZEN = getattr(sys, 'frozen', False)
+BUNDLE = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
+FEEDBACK_SLUG = 'dungeoneditor'
+
+
+def resource(name):
+    """Datei, die mit dem Tool ausgeliefert wird (bei der Exe im Bundle)."""
+    return os.path.join(BUNDLE, name)
+
+
+# Fehlerschluessel -> (englische Vorlage fuer Titel und Fingerabdruck, Guide-Kapitel)
+ERRORS = {
+    'file.not_found': ('A recent file was not found', 'trouble'),
+    'exe.invalid': ('dungeon.txt or Data missing next to the chosen exe', 'start'),
+    'exe.start_failed': ('Dungeons.exe could not be started', 'trouble'),
+    'dialog.not_found': ('The file dialog of Dungeons.exe did not appear', 'trouble'),
+    'update.unreachable': ('GitHub could not be reached', 'trouble'),
+    'update.failed': ('The self-update failed', 'trouble'),
+}
 HERE = os.path.dirname(os.path.abspath(sys.executable if FROZEN else __file__))
 DATA_DIR = (os.path.join(os.environ.get('LOCALAPPDATA', HERE), 'TW1DungeonEditor')
             if FROZEN else HERE)
@@ -540,17 +559,87 @@ class App:
         self.root.bind('<Configure>', self.on_configure)
         self.root.update_idletasks()
         self.fit_window()
+        self.fb = foxfeedback_ui.FeedbackUI(
+            self.root, FEEDBACK_SLUG, VERSION,
+            cfg_get=lambda k, d=None: self.cfg.get(k, d),
+            cfg_set=self._fb_set, lang=self.lang,
+            tests_file=resource('untested.json'), open_guide=self.show_guide,
+            tool_name=APP_TITLE, launcher=None)
+        self.root.report_callback_exception = self._crash
         self.root.deiconify()
         if self.selftest:
             self.root.after(50, self.run_selftest)
             return
         self.root.after(50, self.launch_editor)
+        if not self.carry:
+            self.root.after(900, self.fb.start)
+        self.root.after(1200, lambda: self.fb.refresh(self.paint_experimental))
         if not self.carry and self.cfg.get('update_check', True):
             self.root.after(1500, self.check_updates)
 
     @property
     def exe_path(self):
         return self.editor.exe_path
+
+    # -- Feedback ----------------------------------------------------------
+    def _fb_set(self, key, value):
+        self.cfg[key] = value
+        self.cfg.save()
+
+    def error(self, key, text, parent=None):
+        """Fehlerfenster mit OK, Im Guide nachlesen und Bug melden (11a).
+        Titel und Fingerabdruck der Meldung kommen aus ERRORS, nie aus text."""
+        template, chapter = ERRORS[key]
+        self.fb.log.add(f'error {key}')
+        parent = parent or self.root
+        win = tk.Toplevel(parent, background=BG)
+        win.title(APP_TITLE)
+        win.transient(parent)
+        win.resizable(False, False)
+        theme.dark_titlebar(win)
+        f = ttk.Frame(win, padding=18)
+        f.pack(fill='both', expand=True)
+        ttk.Label(f, text=text, wraplength=460, justify='left').pack(anchor='w')
+        row = ttk.Frame(f)
+        row.pack(fill='x', pady=(16, 0))
+        ok = ttk.Button(row, text='OK', style='Accent.TButton', command=win.destroy)
+        ok.pack(side='right')
+        ttk.Button(row, text=tr('Bug melden'), command=lambda: (
+            win.destroy(), self.fb.report_bug(parent=self.root, error_text=text, error_key=key,
+                                              guide=chapter, title=f'{key}: {template}',
+                                              fp_text=template))).pack(side='right', padx=6)
+        ttk.Button(row, text=tr('Im Guide nachlesen'),
+                   command=lambda: (win.destroy(), self.show_guide(chapter))).pack(side='left')
+        win.bind('<Return>', lambda e: win.destroy())
+        win.bind('<Escape>', lambda e: win.destroy())
+        ok.focus_set()
+        return win
+
+    def _crash(self, exc, value, tb):
+        """Unerwartete Ausnahme: Fenster mit Bug melden statt stiller Konsole."""
+        import traceback
+        frames = [fr for fr in traceback.extract_tb(tb)
+                  if os.path.basename(fr.filename) in ('dungeon_editor.py', 'guidebook.py',
+                                                        'updater.py', 'theme.py')]
+        where = (f'{os.path.basename(frames[-1].filename)}:{frames[-1].lineno}'
+                 if frames else 'unknown')
+        name = exc.__name__
+        text = ''.join(traceback.format_exception_only(exc, value)).strip()
+        self.fb.log.add(f'crash {name} at {where}')
+        try:
+            self.fb.report_bug(parent=self.root, error_text=text, error_key='crash',
+                               title='crash: ' + name, fp_text=f'{name} {where}')
+        except Exception:
+            traceback.print_exception(exc, value, tb)
+
+    def paint_experimental(self):
+        """Hinweis unter der Checkliste nur, solange der Test im Spiel offen ist."""
+        if not hasattr(self, 'exp_note'):
+            return
+        if self.fb.experimental('ingame'):
+            self.exp_note.pack(anchor='w', after=self.check_box)
+        else:
+            self.exp_note.pack_forget()
 
     # -- Aufbau ------------------------------------------------------------
     def build(self):
@@ -725,8 +814,10 @@ class App:
         m.add_command(label=tr('Rundgang starten'), command=self.guide.start)
         m.add_command(label=tr('Dokumentation (SDK-Readme)'), command=self.show_docs)
         m.add_separator()
+        self.fb.add_menu_items(m)
+        m.add_separator()
         for name, url in LINKS:
-            m.add_command(label=f'{name}  ({url})',
+            m.add_command(label=f'{tr(name)}  ({url})',
                           command=lambda u=url: webbrowser.open(u))
         m.add_separator()
         m.add_command(label=tr('Nach Updates suchen'),
@@ -820,10 +911,13 @@ class App:
                             style='Panel.TCheckbutton',
                             command=self.save_checklist).pack(anchor='w', pady=1)
             self.check_vars.append(var)
-        ttk.Label(panel, style='PanelMuted.TLabel', wraplength=270, justify='left',
-                  padding=(8, 4),
-                  text=tr('Schritte 2 bis 5 folgen den SDK-Notizen und sind noch '
-                          'nicht bis ins Spiel nachgespielt.')).pack(anchor='w')
+        self.exp_note = ttk.Label(
+            panel, style='PanelLink.TLabel', wraplength=270, justify='left', padding=(8, 4),
+            cursor='hand2',
+            text=tr('Experimentell: Schritte 2 bis 5 folgen den SDK-Notizen und sind noch '
+                    'nicht bis ins Spiel nachgespielt. Klick: selbst testen.'))
+        self.exp_note.pack(anchor='w')
+        self.exp_note.bind('<Button-1>', lambda e: self.fb.show_tests('script-in-editor'))
         self.load_checklist()
         self.paint_hints()
 
@@ -926,7 +1020,9 @@ class App:
         if not self.editor.start():
             self.host_label.configure(text=tr('Editor konnte nicht gestartet werden.'),
                                       foreground=ERR)
+            self.error('exe.start_failed', tr('Editor konnte nicht gestartet werden.'))
             return
+        self.fb.log.add('editor started')
         self.host_label.place_forget()
         self.editor.embed(self.host.winfo_id())
         self.root.after(200, self.poll)
@@ -936,7 +1032,12 @@ class App:
             self.root.after(600, lambda: self.open_path(reopen))
         self.maybe_start_guide()
 
+    LOGGED_KEYS = {'F2': 'save', 'F3': 'open', 'F4': 'offset', 'F5': 'export',
+                   'F6': 'load old', 'F8': 'new'}
+
     def send(self, key):
+        if key in self.LOGGED_KEYS and hasattr(self, 'fb'):
+            self.fb.log.add('key ' + self.LOGGED_KEYS[key])
         self.editor.key(key)
         return 'break'
 
@@ -953,8 +1054,7 @@ class App:
 
     def open_path(self, path):
         if not os.path.isfile(path):
-            messagebox.showerror(APP_TITLE, tr('Datei nicht gefunden:\n{path}').format(
-                path=path), parent=self.root)
+            self.error('file.not_found', tr('Datei nicht gefunden:\n{path}').format(path=path))
             return
         self.send('F3')
         self._fill_dialog_later(path, time.time() + 10.0)
@@ -965,6 +1065,7 @@ class App:
         if time.time() > deadline:
             self.status(tr('Dateidialog nicht gefunden, bitte Datei von Hand wählen'),
                         ERR)
+            self.fb.log.add('error dialog.not_found')
             return
         self.root.after(100, lambda: self._fill_dialog_later(path, deadline))
 
@@ -977,10 +1078,9 @@ class App:
             return
         path = os.path.normpath(path)
         if not valid_exe(path):
-            messagebox.showerror(APP_TITLE, tr(
+            self.error('exe.invalid', tr(
                 'Neben dieser Exe fehlen dungeon.txt oder der Data-Ordner. '
-                'Bitte Dungeons.exe aus dem Ordner TwoWorldsSDK/Dungeons wählen.'),
-                parent=self.root)
+                'Bitte Dungeons.exe aus dem Ordner TwoWorldsSDK/Dungeons wählen.'))
             return
         if self.confirm_discard():
             self.cfg['exe_path'] = path
@@ -1013,6 +1113,7 @@ class App:
             return
         mode, file, modified = self.editor.state()
         if mode != self.mode:
+            self.fb.log.add('mode ' + mode)
             self.mode = mode
             self.paint_hints()
             for key, btn in self.mode_buttons.items():
@@ -1101,7 +1202,7 @@ class App:
         ttk.Label(frame, text=tr('Editor-Exe: {path}').format(path=self.editor.exe_path),
                   style='Muted.TLabel', wraplength=420, justify='left').pack(anchor='w')
         for name, url in LINKS:
-            lnk = ttk.Label(frame, text=f'{name}: {url}', style='Link.TLabel',
+            lnk = ttk.Label(frame, text=f'{tr(name)}: {url}', style='Link.TLabel',
                             cursor='hand2')
             lnk.pack(anchor='w', padx=(12, 0), pady=1)
             lnk.bind('<Button-1>', lambda e, u=url: webbrowser.open(u))
@@ -1144,8 +1245,8 @@ class App:
             info, err = results[0]
             if err is not None or info is None:
                 if manual:
-                    messagebox.showwarning(tr('Update'), tr(
-                        'GitHub war nicht erreichbar: {err}').format(err=err), parent=self.root)
+                    self.error('update.unreachable', tr(
+                        'GitHub war nicht erreichbar: {err}').format(err=err))
                 return
             if not updater.is_newer(info['tag']):
                 if manual:
@@ -1168,6 +1269,7 @@ class App:
             line = (f'version={VERSION} https={self._selftest_https()} '
                     f'exe={"found" if self.editor.exe_path else "missing"} '
                     f'guide={"ok" if ctx_ok else "empty"} '
+                    f'untested={len(self.fb.tests)} '
                     f'chapters={len(guidebook.CHAPTERS)}')
             with open(self.selftest, 'w', encoding='utf-8') as fh:
                 fh.write(line + '\n')
@@ -1258,6 +1360,10 @@ class UpdateWindow:
         txt.insert('1.0', info['notes'].replace('\r\n', '\n').split('\n---')[0].strip()
                    or info['page'])
         txt.configure(state='disabled')
+        self.untested_note = ttk.Label(f, text='', style='Muted.TLabel', wraplength=580,
+                                       justify='left')
+        self.untested_note.pack(anchor='w', pady=(6, 0))
+        self._count_untested(info['tag'], info['version'])
         self.status = ttk.Label(f, text='', style='Muted.TLabel', wraplength=580, justify='left')
         self.status.pack(anchor='w', pady=(8, 0))
         self.bar = ttk.Progressbar(f, maximum=100)
@@ -1277,6 +1383,35 @@ class UpdateWindow:
             self.status.configure(text=tr('Dieses Release hat keine Prüfsumme. Ohne Prüfsumme '
                                           'installiert das Tool nichts; "Jetzt aktualisieren" '
                                           'öffnet die Release-Seite.'))
+
+    def _offer_report(self, text):
+        self.app.fb.log.add('error update.failed')
+        if getattr(self, 'report_btn', None) is None:
+            template = ERRORS['update.failed'][0]
+            self.report_btn = ttk.Button(
+                self.status.master, text=tr('Bug melden'),
+                command=lambda: self.app.fb.report_bug(
+                    parent=self.win, error_text=text, error_key='update.failed',
+                    title='update.failed: ' + template, fp_text=template))
+            self.report_btn.pack(anchor='w', pady=(6, 0))
+
+    def _count_untested(self, tag, version):
+        """untested.json des neuen Releases lesen und die neuen Tests zaehlen."""
+        def work():
+            import json
+            import urllib.request
+            url = f'https://raw.githubusercontent.com/{updater.REPO}/{tag}/untested.json'
+            req = urllib.request.Request(url, headers={'User-Agent': f'TW1DungeonEditor/{VERSION}'})
+            with urllib.request.urlopen(req, timeout=6) as r:
+                tests = json.loads(r.read().decode('utf-8')).get('tests', [])
+            return sum(1 for t in tests if t.get('since') == version)
+
+        def done(n, err):
+            if err is None and n:
+                self.untested_note.configure(text=tr(
+                    'Diese Version bringt {n} Neuerung(en), die noch niemand im echten Einsatz '
+                    'bestätigt hat. Hilfe > Ungetestetes testen zeigt sie nach dem Update.').format(n=n))
+        self.app.fb._bg(work, done)
 
     def skip(self):
         self.app.cfg['update_skip'] = self.info['tag']
@@ -1323,6 +1458,7 @@ class UpdateWindow:
                 self.go.state(['!disabled'])
                 self.status.configure(text=tr(
                     'Update fehlgeschlagen, nichts wurde geändert: {err}').format(err=state['err']))
+                self._offer_report(str(state['err']))
                 return
             if not state.get('ok'):
                 self.win.after(150, poll)
@@ -1445,8 +1581,12 @@ EN = {
     'Checkliste: ins Spiel bringen': 'Checklist: into the game',
     'Offene Schritte bis ins Spiel. Klick öffnet das Kapitel.':
         'Open steps until the dungeon is in the game. Click opens the chapter.',
-    'Schritte 2 bis 5 folgen den SDK-Notizen und sind noch nicht bis ins Spiel nachgespielt.':
-        'Steps 2 to 5 follow the SDK notes and have not been replayed all the way into the game yet.',
+    'Experimentell: Schritte 2 bis 5 folgen den SDK-Notizen und sind noch nicht bis ins Spiel nachgespielt. Klick: selbst testen.':
+        'Experimental: steps 2 to 5 follow the SDK notes and have not been replayed all the way into the game yet. Click: test it yourself.',
+    'GitHub-Repo': 'GitHub repo', 'Guide-Seite': 'Guide page',
+    'Bug melden': 'Report a bug', 'Im Guide nachlesen': 'Read in the guide',
+    'Diese Version bringt {n} Neuerung(en), die noch niemand im echten Einsatz bestätigt hat. Hilfe > Ungetestetes testen zeigt sie nach dem Update.':
+        'This version brings {n} new feature(s) nobody has confirmed in real use yet. Help > Test untested features shows them after the update.',
     'Maus und Tasten des aktuellen Modus. Klick öffnet das Kapitel dazu.':
         'Mouse and keys of the current mode. Click opens its chapter.',
     'Die Original-Hotkeys von Dungeons.exe. Sie funktionieren auch ohne die Knöpfe.':

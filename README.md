@@ -1,6 +1,6 @@
 # TW1 Dungeon Editor
 
-Version 0.2.0
+Version 0.3.0
 
 A usable window around the original **Dungeons.exe** from the Two Worlds SDK
 (Reality Pump, 2007). The original dungeons of Two Worlds were built with this
@@ -65,6 +65,22 @@ dungeons (`1.txt` to `15.txt`). Open one of them to see how they were built.
   update is only installed after its SHA-256 matches the digest GitHub stores
   for the asset. Can be switched off in the Help menu.
 
+## Help testing and reporting bugs
+
+- **Help > Test untested features** lists what is measured but not yet
+  confirmed in real use (for example running the exported script in the Two
+  Worlds Editor). Each test has steps to tick off, what the result must look
+  like, and **Works** / **Does not work** at the end. Two confirmations mark a
+  test as passed for everybody, and the "experimental" hint in the panel goes
+  away.
+- Every error window has **Report a bug** (and **Read in the guide**). Help >
+  **Report a bug** works at any time, Help > **Known issues** shows what has
+  been reported and its state.
+- Before anything is sent, a window shows exactly what goes to alchemy-fox.de.
+  No names, no e-mail, no grid content; user names in paths are replaced. The
+  public bug title is a fixed English text from the tool. The session log holds
+  only actions (key pressed, mode changed, error key).
+
 ## How it works
 
 The tool starts `Dungeons.exe`, reparents its window into a Tk frame and sends
@@ -93,8 +109,10 @@ Tests:
 - `py test_i18n.py`: every German text has an English translation.
 - `py test_guide.py`: every guide table names its source, the SDK tables read
   the real `dungeon.txt`, version compare and update batch.
+- `py -m unittest tests.test_feedback`: payloads, privacy scrub and the
+  `untested.json` format (only talks to a server on localhost).
 - Selftest of a build: set `TW1DE_SELFTEST=<file>` and start the exe; it writes
-  `version=... https=ok exe=found guide=ok` and quits. With
+  `version=... https=ok exe=found guide=ok untested=3` and quits. With
   `TW1DE_SELFTEST_UPDATE=1` it also downloads the latest release and swaps
   itself (the update test from the design rules, only in a test folder).
 
@@ -122,6 +140,11 @@ Werkzeugleiste, Hinweis-Panel, Statuszeile und einen Guide beim ersten Start.
 - **Hilfe im Tool:** F1 öffnet den Guide mit Kapiteln und Suche, das `?` an
   Titeln springt ins passende Kapitel, die Checkliste merkt sich je Datei, was
   im Two Worlds Editor erledigt ist. Neue Versionen meldet das Tool selbst.
+- **Testen und Bugs melden:** Hilfe > Ungetestetes testen führt Schritt für
+  Schritt durch Neuerungen, die noch niemand im echten Einsatz bestätigt hat.
+  Jedes Fehlerfenster hat **Bug melden**, Hilfe > Bekannte Probleme zeigt den
+  Stand. Vor dem Senden zeigt ein Fenster genau, was übertragen wird, ohne Namen
+  und ohne Projektinhalt.
 - **Python:** Python 3.10+ mit tkinter. Repo herunterladen und
   `TW1 Dungeon Editor.bat` starten. Liegt der Ordner in `TwoWorldsSDK\Dungeons`,
   wird der Editor automatisch gefunden.
